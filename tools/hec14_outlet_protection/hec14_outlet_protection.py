@@ -19,6 +19,13 @@ Usage
     python hec14_outlet_protection.py --example culv1
     python hec14_outlet_protection.py inputs.json [--json-out results.json]
     python hec14_outlet_protection.py --template > inputs.json
+    python hec14_outlet_protection.py --hy8 proj.hy8 --crossing "Oak Creek Road" \
+        --culvert "Twin 6x4 Box" --flow 50-yr --v-lb 11.7 6.2 4.1 3.1 --hs 1.8
+
+Outlet shapes
+    box       ye = yo (rectangular). Wo is the total clear width.
+    circular  ye = (A/2)^0.5 with A the flow area at the brink, HEC-14
+              Sec 10.1. rise is the diameter; Wo defaults to barrels x D.
 
 Standard library only.
 """
@@ -62,6 +69,8 @@ HIGH_TW_RATIO = 0.75
 # Riprap apron (Sec 10.2) applicability, Table 1.1 footnote 8: rise <= 60 in.
 APRON_MAX_RISE_IN = 60
 
+SHAPES = {"box", "circular"}
+
 # Result strings. Kept identical to the workbook so outputs tie exactly.
 GIVES_BASIN = "Riprap basin (Sec 10.1)"
 GIVES_LINED = "Lined channel, no pool"
@@ -92,8 +101,10 @@ class Inputs:
     V_channel: float = 0.0  # Tailwater (channel) velocity, fps
 
     # Plans.
+    shape: str = "box"  # "box" (rectangular) or "circular"
+    barrels: int = 1  # Barrel count; sets Wo for circular when Wo is 0
     Wo: float = 0.0  # Total clear width at the outlet, all barrels, ft
-    rise: float = 0.0  # Culvert rise, ft
+    rise: float = 0.0  # Culvert rise (diameter for circular), ft
     embedment: float = 0.0  # Embedment, ft
 
     # HY-8 Tailwater Data. Optional; used only in the block 9 shear check.
@@ -121,6 +132,12 @@ class Inputs:
 
     def validate(self) -> None:
         """Raise ValueError on inputs the formulas cannot take."""
+        if self.shape not in SHAPES:
+            raise ValueError(f"shape must be one of {sorted(SHAPES)}")
+        if self.barrels < 1:
+            raise ValueError("barrels must be >= 1")
+        if self.shape == "circular" and self.Wo <= 0:
+            self.Wo = self.barrels * self.rise  # total width = n x diameter
         positives = ("Q", "yo", "Vo", "Wo", "rise", "D50_trial", "Ss", "g",
                      "gamma_w")
         for name in positives:
@@ -128,6 +145,8 @@ class Inputs:
                 raise ValueError(f"{name} must be > 0")
         if self.TW < 0 or self.embedment < 0:
             raise ValueError("TW and embedment must be >= 0")
+        if self.embedment >= self.rise:
+            raise ValueError("embedment must be less than rise")
         if self.Ss <= 1:
             raise ValueError("Ss must be > 1")
         if self.min_class not in CLASS_NAMES:
@@ -183,11 +202,12 @@ class Results:
 
     # Block 2. Outlet hydraulics.
     D: float = 0.0  # Hydraulic rise = rise - embedment
+    A: float = 0.0  # Flow area at the brink, all barrels, ft2
     yc: float = 0.0  # Critical depth in the barrel
     regime: str = ""
-    Vo_check: float = 0.0  # Q / (Wo yo)
+    Vo_check: float = 0.0  # Q / A  (= Q / (Wo yo) for a box)
     Vo_check_result: str = ""
-    ye: float = 0.0  # Equivalent depth (rectangular = yo)
+    ye: float = 0.0  # Equivalent depth: yo for a box, (A/2)^0.5 otherwise
     Fr: float = 0.0
     TW_ye: float = 0.0
     tailwater_case: str = ""
@@ -309,6 +329,88 @@ def _fmt1(x: float) -> str:
 
 
 # --------------------------------------------------------------------------
+# Outlet section geometry
+# --------------------------------------------------------------------------
+
+
+def _segment_area(diameter: float, depth: float) -> float:
+    """Area of a circular segment of height ``depth`` from the invert."""
+    if depth <= 0:
+        return 0.0
+    if depth >= diameter:
+        return math.pi * diameter ** 2 / 4.0
+    r = diameter / 2.0
+    theta = 2.0 * math.acos((r - depth) / r)  # central angle, rad
+    return r ** 2 * (theta - math.sin(theta)) / 2.0
+
+
+def _chord(diameter: float, depth: float) -> float:
+    """Water surface width in a circle at ``depth`` from the invert."""
+    if depth <= 0 or depth >= diameter:
+        return 0.0
+    r = diameter / 2.0
+    return 2.0 * math.sqrt(max(r ** 2 - (r - depth) ** 2, 0.0))
+
+
+def flow_area(inp: Inputs, depth: float) -> float:
+    """Flow area for all barrels at ``depth`` above the embedded bed, ft2."""
+    if inp.shape == "box":
+        return inp.Wo * depth
+    # Circular: segment above the embedment line, per barrel.
+    e = inp.embedment
+    per_barrel = (_segment_area(inp.rise, e + depth) - _segment_area(inp.rise, e))
+    return inp.barrels * per_barrel
+
+
+def top_width(inp: Inputs, depth: float) -> float:
+    """Water surface width for all barrels at ``depth``, ft."""
+    if inp.shape == "box":
+        return inp.Wo
+    return inp.barrels * _chord(inp.rise, inp.embedment + depth)
+
+
+def critical_depth(inp: Inputs) -> float:
+    """Critical depth above the embedded bed, ft.
+
+    Box: closed form yc = ((Q/Wo)^2 / g)^(1/3). Circular: bisection on
+    Q^2 T / (g A^3) = 1 between the invert and 0.94 D. Above that the top
+    width collapses toward the crown and the equation always has a root
+    just below D that means nothing physically, so if the flow is still
+    supercritical at 0.94 D the critical depth is reported as D, the same
+    cap HDS-5 charts and HY-8 use.
+    """
+    if inp.shape == "box":
+        return ((inp.Q / inp.Wo) ** 2 / inp.g) ** (1.0 / 3.0)
+    D = inp.rise - inp.embedment
+
+    def f(y: float) -> float:
+        A, T = flow_area(inp, y), top_width(inp, y)
+        if A <= 0 or T <= 0:
+            return -1.0
+        return inp.Q ** 2 * T / (inp.g * A ** 3) - 1.0
+
+    lo, hi = 1e-6 * D, 0.94 * D
+    if f(hi) > 0:  # Still supercritical at 0.94 D: report the crown.
+        return D
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if f(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-10:
+            break
+    return 0.5 * (lo + hi)
+
+
+def equivalent_depth(inp: Inputs, A: float) -> float:
+    """HEC-14 Sec 10.1: ye = yo for rectangular, (A/2)^0.5 otherwise."""
+    if inp.shape == "box":
+        return inp.yo
+    return math.sqrt(A / 2.0)
+
+
+# --------------------------------------------------------------------------
 # Core equations
 # --------------------------------------------------------------------------
 
@@ -394,18 +496,21 @@ def analyze(inp: Inputs) -> Results:
 
     # ---- Block 2. Outlet hydraulics -------------------------------------
     r.D = inp.rise - inp.embedment
-    r.yc = ((inp.Q / inp.Wo) ** 2 / g) ** (1.0 / 3.0)
+    # Brink depth cannot exceed the hydraulic rise.
+    yo_eff = min(inp.yo, r.D)
+    r.A = flow_area(inp, yo_eff)
+    r.yc = critical_depth(inp)
     if inp.yo >= r.D:
         r.regime = "Barrel full at outlet"
     elif inp.yo < r.yc:
         r.regime = "Supercritical at brink; tailwater submerges jet"
     else:
         r.regime = "Subcritical at brink"
-    r.Vo_check = inp.Q / (inp.Wo * inp.yo)
+    r.Vo_check = inp.Q / r.A
     r.Vo_check_result = (
         "OK" if abs(r.Vo_check - inp.Vo) <= 0.1
         else "Does not match: check Q, width and outlet depth")
-    r.ye = inp.yo  # Rectangular outlet: ye = yo (HEC-14 Sec 10.1)
+    r.ye = equivalent_depth(inp, r.A)
     r.Fr = inp.Vo / math.sqrt(g * r.ye)
     r.TW_ye = inp.TW / r.ye
     r.tailwater_case = ("High tailwater" if r.TW_ye > HIGH_TW_RATIO
@@ -474,10 +579,11 @@ def analyze(inp: Inputs) -> Results:
         r.trial_gives = GIVES_CHANGE
 
     # ---- Block 1 derived. Basin length LB (row 24) -----------------------
-    # Uses the raw envelope hs of the trial stone, even when D50/ye is out
-    # of range, exactly as the workbook does.
+    # Ls + La when the trial stone gives a valid basin, else 4 Wo. This is
+    # stricter than the workbook, which used Ls + La for any hs > 0 even
+    # when D50/ye was outside the Eq. 10.1 range or hs/D50 < 2.
     hs_t = t.hs_envelope
-    if hs_t > 0:
+    if r.trial_gives == GIVES_BASIN:
         r.LB = max(10 * hs_t, 3 * inp.Wo) + max(5 * hs_t, inp.Wo)
     else:
         r.LB = 4 * inp.Wo
@@ -665,8 +771,8 @@ def format_report(inp: Inputs, r: Results) -> str:
     w("Units: ft, cfs, fps, psf.")
     w("")
     w("1. Inputs")
-    w(f"  Q = {inp.Q} cfs   Wo = {inp.Wo} ft   rise = {inp.rise} ft   "
-      f"embedment = {inp.embedment} ft")
+    w(f"  Shape = {inp.shape}   barrels = {inp.barrels}   Q = {inp.Q} cfs   "
+      f"Wo = {inp.Wo} ft   rise = {inp.rise} ft   embedment = {inp.embedment} ft")
     w(f"  yo = {inp.yo} ft   Vo = {inp.Vo} fps   TW = {inp.TW} ft   "
       f"V channel = {inp.V_channel} fps   S = {inp.slope}")
     w(f"  V perm = {inp.V_perm} fps   tau perm = {inp.tau_perm} psf   "
@@ -676,12 +782,16 @@ def format_report(inp: Inputs, r: Results) -> str:
     w(f"  HY-8 jet V at 1..4 LB = {inp.V_LB} fps   LB = {_num(r.LB)} ft")
     w("")
     w("2. Outlet hydraulics")
-    w(f"  D = rise - embedment = {_num(r.D)} ft")
-    w(f"  yc = ((Q/Wo)^2/g)^(1/3) = {_num(r.yc, 3)} ft")
+    w(f"  D = rise - embedment = {_num(r.D)} ft   Flow area at brink A = "
+      f"{_num(r.A)} ft2")
+    yc_note = ("((Q/Wo)^2/g)^(1/3)" if inp.shape == "box"
+               else "Q^2 T/(g A^3) = 1")
+    w(f"  yc = {yc_note} = {_num(r.yc, 3)} ft")
     w(f"  Outlet regime: {r.regime}")
-    w(f"  Vo check = Q/(Wo yo) = {_num(r.Vo_check)} fps  ({r.Vo_check_result})")
-    w(f"  ye = {_num(r.ye)} ft   Fr = {_num(r.Fr, 3)}   TW/ye = {_num(r.TW_ye, 3)}"
-      f"   {r.tailwater_case}")
+    w(f"  Vo check = Q/A = {_num(r.Vo_check)} fps  ({r.Vo_check_result})")
+    ye_note = "yo" if inp.shape == "box" else "(A/2)^0.5"
+    w(f"  ye = {ye_note} = {_num(r.ye)} ft   Fr = {_num(r.Fr, 3)}   "
+      f"TW/ye = {_num(r.TW_ye, 3)}   {r.tailwater_case}")
     w("")
     w("3. Applicability screen, HEC-14 Table 1.1")
     w(f"  Riprap apron, Sec 10.2: {r.apron_applicable}")
@@ -794,6 +904,56 @@ def _results_to_dict(r: Results) -> Dict:
     return asdict(r)
 
 
+def _as_key(text: Union[str, int, None], allow_float: bool = False):
+    """CLI selector: int string -> int, float string -> float, else str."""
+    if text is None or isinstance(text, int):
+        return text
+    s = str(text).strip()
+    if s.lstrip("-").isdigit():
+        return int(s)
+    if allow_float:
+        try:
+            return float(s)
+        except ValueError:
+            pass
+    return s
+
+
+def _inputs_from_hy8_args(a: argparse.Namespace) -> Inputs:
+    """Assemble Inputs from --hy8 and friends."""
+    import hy8_io  # local module, imported here to keep the core standalone
+
+    overrides: Dict = {}
+    if a.v_lb is not None:
+        overrides["V_LB"] = list(a.v_lb)
+    if a.hs is not None:
+        overrides["HS_hy8"] = a.hs
+    if a.d50 is not None:
+        overrides["D50_trial"] = a.d50
+    if a.min_class is not None:
+        overrides["min_class"] = a.min_class
+    if a.v_perm is not None:
+        overrides["V_perm"] = a.v_perm
+    if a.tau_perm is not None:
+        overrides["tau_perm"] = a.tau_perm
+    if a.slope is not None:
+        overrides["slope"] = a.slope
+    if a.design_storm is not None:
+        overrides["design_storm"] = a.design_storm
+
+    flow = _as_key(a.flow, allow_float=True)
+    if flow is None:
+        flow = -1  # resolved below to the last column
+    inp = hy8_io.inputs_from_hy8(
+        a.hy8, _as_key(a.crossing), _as_key(a.culvert), flow,
+        rst_path=a.rst, **overrides)
+    if a.v_lb is None:
+        print("WARNING: no --v-lb given; jet velocities at 1 to 4 LB are 0. "
+              "Blocks 6 to 8 and 10 are placeholders until you enter the "
+              "HY-8 Energy Dissipation values.", file=sys.stderr)
+    return inp
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(
         description="HEC-14 Ch. 10 culvert outlet protection (HY-8 workflow).")
@@ -805,6 +965,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--json-out", metavar="FILE",
                    help="also write full results as JSON")
     p.add_argument("--out", metavar="FILE", help="write the text report here")
+    p.add_argument("--inputs-out", metavar="FILE",
+                   help="write the assembled block 1 inputs as JSON "
+                        "(useful after --hy8, to edit and rerun)")
+
+    hy8 = p.add_argument_group(
+        "HY-8 import",
+        "Read Q, yo, Vo, TW, channel velocity and geometry from an HY-8 "
+        "project (.hy8) and its results (.rst). Energy Dissipation values "
+        "are not in those files: give --v-lb and --hs.")
+    hy8.add_argument("--hy8", metavar="FILE", help="HY-8 project file")
+    hy8.add_argument("--rst", metavar="FILE",
+                     help="results file (default: same name as .hy8)")
+    hy8.add_argument("--crossing", default=0,
+                     help="crossing name or 0-based index (default 0)")
+    hy8.add_argument("--culvert", default=0,
+                     help="culvert name or 0-based index (default 0)")
+    hy8.add_argument("--flow", default=None,
+                     help="flow name (e.g. 50-yr), 0-based column index, or "
+                          "total discharge in cfs (default: last column)")
+    hy8.add_argument("--v-lb", nargs=4, type=float, metavar="V",
+                     help="HY-8 jet velocity at 1, 2, 3, 4 LB, fps")
+    hy8.add_argument("--hs", type=float, help="HY-8 Pool Depth HS, ft")
+    hy8.add_argument("--d50", type=float, help="trial D50, ft (default 0.75)")
+    hy8.add_argument("--min-class", choices=CLASS_NAMES,
+                     help="minimum SCDOT class (default B)")
+    hy8.add_argument("--v-perm", type=float,
+                     help="permissible velocity, fps (default 4)")
+    hy8.add_argument("--tau-perm", type=float,
+                     help="permissible shear, psf (default 2.1)")
+    hy8.add_argument("--slope", type=float,
+                     help="channel slope override, ft/ft")
+    hy8.add_argument("--design-storm", help="label for the report")
     a = p.parse_args(argv)
 
     if a.template:
@@ -812,11 +1004,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if a.example:
         inp = EXAMPLES[a.example]
+    elif a.hy8:
+        inp = _inputs_from_hy8_args(a)
     elif a.inputs:
         with open(a.inputs, encoding="utf-8") as fh:
             inp = Inputs.from_dict(json.load(fh))
     else:
-        p.error("give an inputs JSON file, --example or --template")
+        p.error("give an inputs JSON file, --hy8, --example or --template")
+
+    if a.inputs_out:
+        with open(a.inputs_out, "w", encoding="utf-8") as fh:
+            json.dump(asdict(inp), fh, indent=2)
 
     r = analyze(inp)
     report = format_report(inp, r)

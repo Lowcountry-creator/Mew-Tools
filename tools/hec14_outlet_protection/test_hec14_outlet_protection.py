@@ -255,7 +255,85 @@ def test_low_tailwater_path():
     assert all(x.within_protection == "See block 7" for x in r.reaches)
 
 
+def test_lb_gated_on_valid_basin():
+    """LB falls back to 4 Wo unless the trial stone gives a valid basin.
+
+    Culvert 1 inputs with a 0.25 ft stone: D50/ye = 0.089 < 0.1, so hs is
+    positive but Eq. 10.1 does not apply. The workbook used Ls + La here;
+    this port uses 4 Wo.
+    """
+    inp = h.Inputs(**{**h.asdict(h.EXAMPLES["culv1"]), "D50_trial": 0.25})
+    r = h.analyze(inp)
+    assert r.trial.result == "D50/ye out of range"
+    assert r.trial.hs_envelope > 0
+    assert r.trial_gives == h.GIVES_CHANGE
+    assert r.LB == 4 * 14
+    assert r.basin_applies == "No"
+
+
+# ------------------------------------------------------------- Circular
+
+
+def test_segment_geometry():
+    D = 4.0
+    assert h._segment_area(D, 0) == 0
+    assert math.isclose(h._segment_area(D, 2), math.pi * D ** 2 / 8)
+    assert math.isclose(h._segment_area(D, 4), math.pi * D ** 2 / 4)
+    assert math.isclose(h._chord(D, 2), 4)
+    assert h._chord(D, 4) == 0
+
+
+def test_circular_half_full():
+    """48 in RCP, one barrel, flowing half full at the brink."""
+    D = 4.0
+    A = math.pi * D ** 2 / 8  # 6.283 ft2
+    Q = 60.0
+    inp = h.Inputs(shape="circular", barrels=1, Q=Q, rise=D, embedment=0,
+                   yo=2.0, Vo=Q / A, TW=1.0, V_channel=2.0,
+                   V_LB=[6, 4, 3, 2])
+    r = h.analyze(inp)
+    assert inp.Wo == D  # filled in by validate
+    assert math.isclose(r.A, A)
+    assert math.isclose(r.ye, math.sqrt(A / 2))
+    assert r.Vo_check_result == "OK"
+    assert math.isclose(r.Fr, inp.Vo / math.sqrt(32.2 * r.ye))
+    # Critical depth satisfies Q^2 T / (g A^3) = 1
+    yc = r.yc
+    Ac, Tc = h.flow_area(inp, yc), h.top_width(inp, yc)
+    assert math.isclose(Q ** 2 * Tc / (32.2 * Ac ** 3), 1.0, rel_tol=1e-6)
+    assert 0 < yc < D
+
+
+def test_circular_embedded_and_full():
+    # Embedded 1 ft: flow area excludes the segment below the bed line.
+    inp = h.Inputs(shape="circular", Q=50, rise=4, embedment=1, yo=1.5,
+                   Vo=5, TW=1, V_channel=1, V_LB=[4, 3, 2, 1])
+    r = h.analyze(inp)
+    expect = h._segment_area(4, 2.5) - h._segment_area(4, 1)
+    assert math.isclose(r.A, expect)
+    assert r.D == 3
+    # Brink depth at the crown: full barrel, area is the net section.
+    full = h.Inputs(shape="circular", Q=50, rise=4, embedment=0, yo=4.0,
+                    Vo=50 / (math.pi * 4), TW=1, V_channel=1,
+                    V_LB=[4, 3, 2, 1])
+    rf = h.analyze(full)
+    assert rf.regime == "Barrel full at outlet"
+    assert math.isclose(rf.A, math.pi * 4)
+    assert rf.Vo_check_result == "OK"
+
+
+def test_circular_yc_capped_at_crown():
+    # Absurd discharge for a 2 ft pipe: critical depth reported as D.
+    inp = h.Inputs(shape="circular", Q=500, rise=2, yo=2, Vo=159.2, TW=1,
+                   V_channel=1, V_LB=[1, 1, 1, 1])
+    assert h.critical_depth(inp) == 2
+
+
 def test_validation():
+    with pytest.raises(ValueError):
+        h.analyze(h.Inputs(shape="oval", Q=1, Wo=1, rise=1, yo=1, Vo=1))
+    with pytest.raises(ValueError):
+        h.analyze(h.Inputs(Q=1, Wo=1, rise=1, embedment=1, yo=1, Vo=1))
     with pytest.raises(ValueError):
         h.analyze(h.Inputs(Q=0, Wo=1, rise=1, yo=1, Vo=1))
     with pytest.raises(ValueError):
