@@ -1,0 +1,30 @@
+{
+  "project": "US176",
+  "culvert": "Culvert 1",
+  "description": "Dual 7 ft x 7 ft RCB, run in HY-8 as one 14 ft wide outlet",
+  "design_storm": "50-yr (SCDOT primary route)",
+  "hy8_file": "",
+  "Q": 639.56,
+  "yo": 2.8,
+  "Vo": 16.32,
+  "TW": 5.14,
+  "V_channel": 7.02,
+  "Wo": 14,
+  "rise": 7,
+  "embedment": 1,
+  "slope": 0.0211,
+  "V_perm": 4,
+  "tau_perm": 2.1,
+  "Ss": 2.65,
+  "g": 32.2,
+  "gamma_w": 62.4,
+  "D50_trial": 0.75,
+  "min_class": "B",
+  "V_LB": [
+    11.741,
+    6.235,
+    4.145,
+    3.102
+  ],
+  "HS_hy8": 1.819
+}
