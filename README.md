@@ -2,8 +2,8 @@
 
 ![tests](https://github.com/Lowcountry-creator/Mew-Tools/actions/workflows/tests.yml/badge.svg)
 
-Engineering calculation utilities. Python 3.9+, standard library only unless a
-tool's own README says otherwise.
+Engineering calculation utilities. Python 3.11+ (CI runs 3.11 to 3.13),
+standard library only unless a tool's own README says otherwise.
 
 ## Layout
 

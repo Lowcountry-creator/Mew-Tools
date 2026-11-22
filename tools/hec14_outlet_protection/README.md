@@ -5,7 +5,8 @@ Chapter 10 with HY-8). Same ten blocks, same formulas, same limits, same
 result wording, so a run can be checked line by line against the spreadsheet
 or the HY-8 Riprap Basin printout.
 
-Standard library only. Python 3.9+.
+Standard library only. Python 3.11+ (CI runs 3.11 to 3.13; nothing in the
+code needs newer than 3.9, but older versions are not tested).
 
 ## Run
 
@@ -116,7 +117,7 @@ the C0 curves, the Excel CEILING rounding, interpolation past 4 LB, class
 selection, the low tailwater path, the LB gate, circular geometry (segment
 area, chord, critical depth, embedment, full barrel) and input validation.
 `test_hy8_io.py` runs the parsers and the block 1 mapping on the synthetic
-HY-8_Exporter demo project in `examples/`. CI runs both on Python 3.9, 3.11
+HY-8_Exporter demo project in `examples/`. CI runs both on Python 3.11, 3.12
 and 3.13.
 
 ## Differences from the workbook
