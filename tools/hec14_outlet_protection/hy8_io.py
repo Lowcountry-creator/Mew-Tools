@@ -251,6 +251,7 @@ class RstTable:
     culvert_index: Optional[int]
     rows: Dict[str, List[Optional[float]]] = field(default_factory=dict)
     units: Dict[str, str] = field(default_factory=dict)
+    text: Dict[str, List[str]] = field(default_factory=dict)  # raw cells
 
     def row(self, prefix: str) -> List[Optional[float]]:
         """Values of the first row whose name starts with ``prefix``."""
@@ -338,6 +339,7 @@ def read_rst(path: Union[str, Path]) -> List[RstCrossing]:
             match = _UNIT.search(label)
             name = _UNIT.sub("", label).strip()
             table.rows[name] = [_cell(c) for c in cells]
+            table.text[name] = [c.strip() for c in cells]
             table.units[name] = match.group(1).strip() if match else ""
     return crossings
 
@@ -459,6 +461,21 @@ def inputs_from_hy8(hy8_path: Union[str, Path],
         rise=culv.rise_ft,
         embedment=culv.embed_depth_ft,
         slope=xing.channel_slope,
+        hy8_summary=_summary_record(table, names, i),
     )
     data.update(overrides)
     return Inputs.from_dict(data)
+
+
+def _summary_record(table: RstTable, names: List[str], i: int) -> Dict:
+    """Serializable copy of the Culvert Summary Table for the report."""
+    totals = table.row("Total Discharge")
+    columns = []
+    for j, q in enumerate(totals):
+        name = names[j] if j < len(names) and names[j] else ""
+        columns.append(name or (f"{q:g} cfs" if q is not None else f"Col {j + 1}"))
+    rows = [{"label": name, "unit": table.units.get(name, ""),
+             "values": values, "text": table.text.get(name, [])}
+            for name, values in table.rows.items()]
+    return {"table": table.title, "flow_index": i, "columns": columns,
+            "rows": rows}
