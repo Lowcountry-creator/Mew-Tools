@@ -1,13 +1,16 @@
 # Mew-Tools
 
-Engineering calculation utilities. Python 3.10+, standard library only unless a
-tool's own README says otherwise.
+![tests](https://github.com/Lowcountry-creator/Mew-Tools/actions/workflows/tests.yml/badge.svg)
+
+Engineering calculation utilities. Python 3.11+ (CI runs 3.11 to 3.13),
+standard library only unless a tool's own README says otherwise.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `tools/` | One subfolder per tool. Each holds its script, a README, and tests. |
+| `tools/hec14_outlet_protection/` | Culvert outlet protection per HEC-14 Ch. 10, with HY-8 import. |
 
 ## Conventions
 
