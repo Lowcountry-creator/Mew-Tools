@@ -10,7 +10,8 @@ standard library only unless a tool's own README says otherwise.
 | Path | Purpose |
 |---|---|
 | `tools/` | One subfolder per tool. Each holds its script, a README, and tests. |
-| `tools/hec14_outlet_protection/` | Culvert outlet protection per HEC-14 Ch. 10, with HY-8 import. Command line, or `hec14_gui.py` for a window. |
+| `tools/_report/` | Shared paged HTML/PDF report frame (logo, title bar, cover, page numbers), ported from HY-8 Exporter. |
+| `tools/hec14_outlet_protection/` | Culvert outlet protection per HEC-14 Ch. 10, with HY-8 import printed calc package, and `hec14_gui.py` for a window. |
 
 ## Conventions
 

@@ -23,6 +23,11 @@ python hec14_outlet_protection.py --hy8 proj.hy8 --crossing "Oak Creek Road" \
 python hec14_outlet_protection.py --template > culv.json   # edit the inputs
 python hec14_outlet_protection.py culv.json --out culv_report.txt --json-out culv.json.out
 
+# Printed calc package: HTML and PDF in the HY-8 Exporter page frame
+python hec14_outlet_protection.py --batch examples/us176_batch.json \
+    --prepared-by "JMW" --report-date 11/22/2026 --project-number "US176" \
+    --logo path/to/logo.png --html US176_outlet_protection.html --pdf US176_outlet_protection.pdf
+
 # Tests (from the repo root or this folder)
 python -m pytest
 ```
@@ -53,6 +58,34 @@ Python.
 
 The window does no math of its own: it builds an `Inputs`, calls `analyze`
 and `format_report`, and shows the text the CLI prints.
+
+## Printed report
+
+`--html` writes a paged, self-contained HTML calc package; `--pdf` prints it
+with a local Edge or Chrome (same approach as HY-8 Exporter, no Python PDF
+dependency). The frame is shared with other Mew-Tools calculators in
+`tools/_report/`: logo on every page, title bar, footer with page numbers,
+cover with project meta, contents and a results grid.
+
+| Option | Effect |
+|---|---|
+| `--html FILE`, `--pdf FILE` | Outputs. `--pdf` alone also writes the HTML next to it. |
+| `--logo FILE` | PNG, JPG, GIF or SVG, up to 5 MB, embedded in the HTML. Default is the Mew-Tools logo. |
+| `--batch FILE` | JSON list of block 1 input objects; one document, one section per culvert. Build one with `--example all --inputs-out`. |
+| `--title`, `--project-number`, `--prepared-by`, `--checked-by`, `--report-date`, `--notes` | Cover and header text. Project name and scenario come from the inputs. |
+| `--browser EXE` | Edge or Chrome executable if it is not on the PATH. `REPORT_PDF_BROWSER` does the same. |
+
+Pages per culvert:
+
+1. Inputs and outlet hydraulics (blocks 1 to 3)
+2. HY-8 source data: the Culvert Summary Table the inputs were read from, design column highlighted, and the field mapping. Only when the inputs came from `--hy8`.
+3. Riprap basin check and geometry (blocks 4 and 5)
+4. Velocity decay, protection length, riprap sizing (blocks 6 to 8)
+5. Receiving channel and design summary (blocks 9 and 10)
+
+If PDF export fails the HTML is still written; open it in a browser and use
+Print to PDF. Where Playwright is installed (developer machines, CI) it is
+used as a fallback automatically.
 
 ## HY-8 import
 
@@ -144,10 +177,12 @@ the C0 curves, the Excel CEILING rounding, interpolation past 4 LB, class
 selection, the low tailwater path, the LB gate, circular geometry (segment
 area, chord, critical depth, embedment, full barrel) and input validation.
 `test_hy8_io.py` runs the parsers and the block 1 mapping on the synthetic
-HY-8_Exporter demo project in `examples/`. `test_hec14_gui.py` checks the
+HY-8_Exporter demo project in `examples/`. `test_hec14_report.py` checks the
+page structure, logo embedding, the HY-8 source page, the batch CLI and a
+real print-to-PDF where a browser can print. `test_hec14_gui.py` checks the
 form round trip against the examples and, where a display exists, opens the
-window, runs an example and does an HY-8 import. CI runs both on Python 3.11, 3.12
-and 3.13.
+window, runs an example and does an HY-8 import. CI runs all of it on Python
+3.11, 3.12 and 3.13.
 
 ## Differences from the workbook
 
