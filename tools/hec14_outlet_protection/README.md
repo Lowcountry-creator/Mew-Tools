@@ -27,6 +27,33 @@ python hec14_outlet_protection.py culv.json --out culv_report.txt --json-out cul
 python -m pytest
 ```
 
+## Window app
+
+`hec14_gui.py` is a form over the same calculator. Standard library only;
+tkinter comes with the python.org installer for Windows.
+
+```
+cd C:\Mew-Tools\tools\hec14_outlet_protection
+pyw hec14_gui.py
+```
+
+Use `py hec14_gui.py` instead to keep a console open for error output. On
+Windows you can also double-click `hec14_gui.py` if `.py` files open with
+Python.
+
+1. Fill block 1, pick an example and press **Load**, or **Open inputs...**
+   for a JSON from **Save inputs...** or the CLI's `--inputs-out`.
+2. **Import HY-8...** reads a `.hy8` and its `.rst`; pick the crossing,
+   culvert and flow. The typed Energy Dissipation values, trial stone and
+   limits already on the form are kept, because HY-8 does not write them.
+3. **Run (F5)** shows the full report. The status bar gives what the trial
+   stone gives and the protection length.
+4. **Save report...** writes the text report; **Save results JSON...** writes
+   the same JSON as `--json-out`.
+
+The window does no math of its own: it builds an `Inputs`, calls `analyze`
+and `format_report`, and shows the text the CLI prints.
+
 ## HY-8 import
 
 `--hy8` pulls block 1 from the two files HY-8 writes:
@@ -117,7 +144,9 @@ the C0 curves, the Excel CEILING rounding, interpolation past 4 LB, class
 selection, the low tailwater path, the LB gate, circular geometry (segment
 area, chord, critical depth, embedment, full barrel) and input validation.
 `test_hy8_io.py` runs the parsers and the block 1 mapping on the synthetic
-HY-8_Exporter demo project in `examples/`. CI runs both on Python 3.11, 3.12
+HY-8_Exporter demo project in `examples/`. `test_hec14_gui.py` checks the
+form round trip against the examples and, where a display exists, opens the
+window, runs an example and does an HY-8 import. CI runs both on Python 3.11, 3.12
 and 3.13.
 
 ## Differences from the workbook
