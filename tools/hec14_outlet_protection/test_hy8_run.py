@@ -124,7 +124,7 @@ def test_hy8_runs_from_the_work_folder_and_logs(tmp_path):
     rst, _ = hy8_run.locate_results(project(tmp_path), "run", str(exe))
     log = (rst.parent / hy8_run.RUN_LOG).read_text()
     assert log.startswith("Source project: ")
-    assert log.split("\n\n", 1)[1].strip() == str(rst.parent)
+    assert f"\n{rst.parent}\n" in log  # pwd printed by every run
 
 
 @POSIX
@@ -147,8 +147,7 @@ def test_runs_root_does_not_nest(tmp_path):
 
 def test_crash_code_is_explained(tmp_path):
     cmd = ["C:/HY-8/HY864.exe", "-OpenRunSave", "C:/runs/Demo.hy8"]
-    msg = hy8_run._no_results_message(Path("Demo.hy8"), 3221225477, cmd,
-                                      tmp_path / "none.txt")
+    msg = hy8_run._no_results_message(Path("Demo.hy8"), 3221225477, cmd)
     assert "HY-8 crashed" in msg and "access violation" in msg
     assert "0xC0000005" in msg
     assert '"C:/HY-8/HY864.exe" -OpenRunSave "C:/runs/Demo.hy8"' in msg
@@ -178,3 +177,60 @@ def test_cli_without_hy8_or_rst_exits_with_message(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="HY-8 was not found"):
         h.main(["--hy8", str(project(tmp_path)), "--hy8-exe",
                 str(tmp_path / "nope.exe")])
+
+
+def per_crossing_hy8(folder: Path, fail: str = "") -> Path:
+    """Stand-in that writes a one-crossing .rst named for the file's
+    crossing, and exits 5 with no results for the crossing named fail."""
+    exe = folder / "HY864_split.sh"
+    exe.write_text(
+        "#!/bin/sh\n"
+        "name=$(sed -n 's/^STARTCROSSING *\"\\(.*\\)\".*/\\1/p' \"$2\" "
+        "| head -1)\n"
+        f"[ \"$name\" = \"{fail}\" ] && exit 5\n"
+        "printf 'CrossingGUID: g\\n\\nDialog: Summary of Flows at Crossing"
+        " - %s\\nTotal Discharge (cfs), 1.00\\n\\nEndCrossing\\n' "
+        "\"$name\" > \"${2%.hy8}.rst\"\n")
+    exe.chmod(0o755)
+    return exe
+
+
+def test_split_crossings_one_per_file():
+    import hy8_io
+    names = [c.name for c in hy8_io.read_hy8(HY8).crossings]
+    parts = hy8_run.split_crossings(HY8.read_text())
+    assert [n for n, _ in parts] == names and len(names) > 1
+    for name, body in parts:
+        assert "NUMCROSSINGS         1" in body
+        assert body.count("STARTCROSSING") == 1
+        assert body.rstrip().endswith("ENDPROJECTFILE")
+
+
+def test_split_keeps_crlf_line_endings():
+    text = HY8.read_text().replace("\n", "\r\n")
+    for _, body in hy8_run.split_crossings(text):
+        assert "\r\n" in body and "\n" not in body.replace("\r\n", "")
+
+
+@POSIX
+def test_multi_crossing_project_runs_one_crossing_at_a_time(tmp_path):
+    import hy8_io
+    p = project(tmp_path)
+    rst, note = hy8_run.locate_results(p, "run",
+                                       str(per_crossing_hy8(tmp_path)))
+    want = [c.name for c in hy8_io.read_hy8(p).crossings]
+    assert [r.name for r in hy8_io.read_rst(rst)] == want
+    assert "one at a time" in note and "no results" not in note
+    log = (rst.parent / hy8_run.RUN_LOG).read_text()
+    assert log.count("-OpenRunSave") == len(want)
+
+
+@POSIX
+def test_crossing_without_results_is_named(tmp_path):
+    import hy8_io
+    p = project(tmp_path)
+    bad = hy8_io.read_hy8(p).crossings[1].name
+    rst, note = hy8_run.locate_results(
+        p, "run", str(per_crossing_hy8(tmp_path, fail=bad)))
+    assert bad not in [r.name for r in hy8_io.read_rst(rst)]
+    assert f"no results for {bad!r}" in note

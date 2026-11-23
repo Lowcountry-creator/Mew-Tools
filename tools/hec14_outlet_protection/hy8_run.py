@@ -8,6 +8,11 @@ switch on a COPY in a work folder, so the user's project is never touched,
 and returns the ``.rst`` it wrote. HY-8's console output goes to
 ``hy8_run_log.txt`` in the same folder.
 
+HY-8 8.0.1.2 crashes under -OpenRunSave on a project with more than one
+crossing, though each crossing runs on its own (found on a real 3-crossing
+project, Nov 2026). So a multi-crossing project is split into one file per
+crossing, each is run in turn, and the .rst files are joined.
+
 Same approach and executable search as HY-8_Exporter (hy8_runner.py and
 hy8_package.py; MIT, same author). HY-8 runs on Windows only.
 
@@ -27,7 +32,7 @@ import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 DEFAULT_LOCATIONS = (
     r"C:\Program Files\HY-8 8.00\HY864.exe",
@@ -86,9 +91,68 @@ def runs_root(hy8_path: PathLike) -> Path:
     return hy8_path.parent / RUNS_FOLDER
 
 
+def split_crossings(text: str) -> List[Tuple[str, str]]:
+    """Split HY-8 project text into one project per crossing.
+
+    Returns (crossing name, project text) pairs. Each keeps the project
+    header with NUMCROSSINGS set to 1, its own crossing block, and the end
+    card. Line endings are kept as they are in the file.
+    """
+    nl = "\r\n" if "\r\n" in text else "\n"
+    lines = text.split(nl)
+    starts = [i for i, ln in enumerate(lines)
+              if ln.startswith("STARTCROSSING")]
+    if not starts:
+        return []
+    head = [("NUMCROSSINGS         1" if ln.startswith("NUMCROSSINGS")
+             else ln) for ln in lines[:starts[0]]]
+    tail_at = next((i for i, ln in enumerate(lines)
+                    if ln.strip() == "ENDPROJECTFILE"), len(lines))
+    out = []
+    for i in starts:
+        name = lines[i].split(None, 1)[1].strip().strip('"') \
+            if len(lines[i].split(None, 1)) > 1 else ""
+        end = next((j for j in range(i + 1, tail_at)
+                    if lines[j].startswith("ENDCROSSING")), tail_at - 1)
+        out.append((name, nl.join(head + lines[i:end + 1] + lines[tail_at:])))
+    return out
+
+
+def _run_once(exe: PathLike, copy: Path, work: Path,
+              log) -> Tuple[int, str]:
+    """Run HY-8 -OpenRunSave on one file. Returns (exit code, its output);
+    both also go to the open run log."""
+    command = [str(exe), "-OpenRunSave", str(copy)]
+    capture = copy.with_suffix(".out.txt")
+    # Same call as Aquaveo's hy8runner: a normal window, no hidden-start
+    # flags. Run from the work folder, which is writable and holds the copy.
+    with open(capture, "w", encoding="utf-8", errors="replace") as out:
+        done = subprocess.run(
+            command, cwd=str(work), stdin=subprocess.DEVNULL, stdout=out,
+            stderr=subprocess.STDOUT, timeout=RUN_TIMEOUT_SECONDS,
+            check=False)
+    said = capture.read_text(encoding="utf-8", errors="replace").strip()
+    capture.unlink()
+    log.write(f"Command: {' '.join(command)}\n{said}\n"
+              f"Exit code: {done.returncode}\n\n")
+    log.flush()
+    return done.returncode, said
+
+
+def _has_results(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
+
+
 def run_hy8_copy(hy8_path: PathLike, work_dir: PathLike,
-                 exe: Optional[PathLike]) -> Path:
-    """Copy the project to work_dir, run HY-8 on the copy, return its .rst."""
+                 exe: Optional[PathLike]) -> Tuple[Path, List[str]]:
+    """Copy the project to work_dir, run HY-8 on it, return its .rst.
+
+    HY-8 8.0.1.2 crashes (0xC0000005) under -OpenRunSave on projects with
+    more than one crossing, while the same crossings run one per file. So
+    a multi-crossing project is split into one file per crossing, each is
+    run in turn, and their .rst files are joined into one. Returns the .rst
+    and the names of any crossings that got no results.
+    """
     if exe is None:
         raise RuntimeError(
             "HY-8 was not found, so its results could not be generated. "
@@ -98,9 +162,7 @@ def run_hy8_copy(hy8_path: PathLike, work_dir: PathLike,
     work = Path(work_dir)
     work.mkdir(parents=True, exist_ok=True)
     copy = work / source.name
-    # HY-8 created empty result files and then crashed on runs whose paths
-    # were 112+ characters, but not on its usual short paths. A fixed-size
-    # path buffer is a likely cause, so keep the full path short.
+    # Keep the full path short; HY-8 is old code and paths are cheap to trim.
     if len(str(copy.with_suffix(".rsql"))) > MAX_RUN_PATH:
         copy = work / ("run" + source.suffix)
     shutil.copy2(source, copy)
@@ -108,34 +170,45 @@ def run_hy8_copy(hy8_path: PathLike, work_dir: PathLike,
         old = copy.with_suffix(suffix)
         if old.exists():
             old.unlink()
+    text = source.read_bytes().decode("utf-8", errors="replace")
+    parts = split_crossings(text)
     log = work / RUN_LOG
-    command = [str(exe), "-OpenRunSave", str(copy)]
+    rst = copy.with_suffix(".rst")
     try:
-        # Same call as Aquaveo's hy8runner: a normal window, no hidden-start
-        # flags. Run from the work folder, which is writable and holds the
-        # copy, not from wherever the calling app was started.
         with open(log, "w", encoding="utf-8", errors="replace") as out:
-            out.write(f"Source project: {source}\nCommand: "
-                      f"{' '.join(command)}\n\n")
-            out.flush()
-            done = subprocess.run(
-                command, cwd=str(work), stdin=subprocess.DEVNULL, stdout=out,
-                stderr=subprocess.STDOUT, timeout=RUN_TIMEOUT_SECONDS,
-                check=False)
+            out.write(f"Source project: {source}\n\n")
+            if len(parts) <= 1:
+                runs = [("", copy, *_run_once(exe, copy, work, out))]
+            else:
+                runs = []
+                for i, (name, body) in enumerate(parts, 1):
+                    one = work / f"c{i}{source.suffix}"
+                    one.write_bytes(body.encode("utf-8"))
+                    out.write(f"Crossing {name!r} -> {one.name}\n")
+                    code, said = _run_once(exe, one, work, out)
+                    runs.append((name, one, code, said))
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"HY-8 could not be run: {exc}") from exc
-    rst = copy.with_suffix(".rst")
-    if not rst.is_file() or rst.stat().st_size == 0:
-        raise RuntimeError(_no_results_message(source, done.returncode,
-                                               command, log))
-    return rst
+
+    ok = [r for r in runs if _has_results(r[1].with_suffix(".rst"))]
+    if not ok:
+        name, failed, code, said = runs[0]
+        command = [str(exe), "-OpenRunSave", str(failed)]
+        raise RuntimeError(_no_results_message(source, code, command, said))
+    if len(parts) > 1:  # join the per-crossing results into one .rst
+        joined = [r[1].with_suffix(".rst").read_text(
+            encoding="utf-8", errors="replace").strip() for r in ok]
+        rst.write_text("\n\n".join(joined) + "\n", encoding="utf-8")
+    missing = [r[0] for r in runs if r not in ok]
+    return rst, missing
 
 
 def _quote(path: PathLike) -> str:
     return f'"{path}"'
 
 
-def _no_results_message(source: Path, code: int, command, log: Path) -> str:
+def _no_results_message(source: Path, code: int, command,
+                        detail: str = "") -> str:
     """Plain explanation when HY-8 wrote no .rst, with a command to retry."""
     code_u = code & 0xFFFFFFFF  # Windows reports crashes as large unsigned
     if code_u in CRASH_CODES:
@@ -145,10 +218,6 @@ def _no_results_message(source: Path, code: int, command, log: Path) -> str:
     else:
         what = (f"HY-8 finished (exit code {code}) but wrote no results "
                 f"for {source.name}.")
-    detail = ""
-    if log.is_file():
-        text = log.read_text(encoding="utf-8", errors="replace")
-        detail = text.split("\n\n", 1)[-1].strip()  # HY-8's own output
     manual = " ".join([_quote(command[0]), command[1], _quote(command[2])])
     parts = [what]
     if detail:
@@ -186,6 +255,13 @@ def locate_results(hy8_path: PathLike, mode: str = "auto", exe: str = "",
     work = Path(work_dir) if work_dir else runs_root(hy8_path)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder = work / stamp  # short; the run log names the source project
-    rst = run_hy8_copy(hy8_path, folder, found)
-    return rst, (f"Results generated by HY-8 (-OpenRunSave) on a copy in "
-                 f"{folder.name}; the project file was not changed")
+    rst, missing = run_hy8_copy(hy8_path, folder, found)
+    note = (f"Results generated by HY-8 (-OpenRunSave) on a copy in "
+            f"{folder.name}; the project file was not changed")
+    if len(split_crossings(hy8_path.read_bytes().decode(
+            "utf-8", errors="replace"))) > 1:
+        note += "; crossings were run one at a time"
+    if missing:
+        note += ("; HY-8 gave no results for "
+                 + ", ".join(repr(m) for m in missing))
+    return rst, note
