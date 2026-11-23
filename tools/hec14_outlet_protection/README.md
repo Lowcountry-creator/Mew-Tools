@@ -48,13 +48,23 @@ Python.
 
 1. Fill block 1, pick an example and press **Load**, or **Open inputs...**
    for a JSON from **Save inputs...** or the CLI's `--inputs-out`.
-2. **Import HY-8...** reads a `.hy8` and its `.rst`; pick the crossing,
-   culvert and flow. The typed Energy Dissipation values, trial stone and
-   limits already on the form are kept, because HY-8 does not write them.
+2. **Import HY-8...** opens a `.hy8`; pick the crossing, culvert and flow.
+   Results come from the `.rst` beside the project when it is current.
+   HY-8 8.0.1.2 does not leave one on a normal save, so by default the
+   window runs HY-8 itself on a copy (see "HY-8 results" below) and reads
+   the `.rst` that run writes. It finds `HY864.exe` under
+   `C:\Program Files\HY-8*`; otherwise use **Browse...** once and it is
+   remembered. The typed Energy Dissipation values, trial stone and limits
+   already on the form are kept, because HY-8 does not write them.
 3. **Run (F5)** shows the full report. The status bar gives what the trial
    stone gives and the protection length.
-4. **Save report...** writes the text report; **Save results JSON...** writes
-   the same JSON as `--json-out`.
+4. **Export PDF/HTML...** writes the printed calc package (below) with its
+   figures page, then opens it. Prepared by, checked by, title, project
+   number and logo are remembered between runs.
+5. **Save text...** writes the text report; **Save JSON...** writes the same
+   JSON as `--json-out`.
+
+Settings live in `%USERPROFILE%\.mew-tools\hec14_gui.json`.
 
 The window does no math of its own: it builds an `Inputs`, calls `analyze`
 and `format_report`, and shows the text the CLI prints.
@@ -77,11 +87,18 @@ cover with project meta, contents and a results grid.
 
 Pages per culvert:
 
-1. Inputs and outlet hydraulics (blocks 1 to 3)
-2. HY-8 source data: the Culvert Summary Table the inputs were read from, design column highlighted, and the field mapping. Only when the inputs came from `--hy8`.
-3. Riprap basin check and geometry (blocks 4 and 5)
-4. Velocity decay, protection length, riprap sizing (blocks 6 to 8)
-5. Receiving channel and design summary (blocks 9 and 10)
+1. Figures, in the HY-8 Exporter style: a schematic profile along the outlet
+   (barrel, brink depth, tailwater, riprap reaches by class over the adopted
+   length, and the Option 2 pool dashed when a basin applies), the jet
+   velocity decay chart with the permissible and channel velocities and the
+   protection length, then the Option 2 basin plan at true scale, or the
+   Eq. 10.1 stone check chart when no basin applies, beside the key results.
+   Figures are drawn from the computed values; nothing new is calculated.
+2. Inputs and outlet hydraulics (blocks 1 to 3)
+3. HY-8 source data: the Culvert Summary Table the inputs were read from, design column highlighted, and the field mapping. Only when the inputs came from `--hy8`.
+4. Riprap basin check and geometry (blocks 4 and 5)
+5. Velocity decay, protection length, riprap sizing (blocks 6 to 8)
+6. Receiving channel and design summary (blocks 9 and 10)
 
 If PDF export fails the HTML is still written; open it in a browser and use
 Print to PDF. Where Playwright is installed (developer machines, CI) it is
@@ -107,6 +124,24 @@ Depth), the trial stone (`--d50`, `--min-class`) and the SCDOT limits
 (`--v-perm`, `--tau-perm`). Without `--v-lb` the run prints a warning and
 blocks 6 to 8 and 10 are placeholders. `--inputs-out` writes the assembled
 inputs so you can edit and rerun without HY-8.
+
+### HY-8 results
+
+HY-8 8.x does not always write the `.rst` on a normal save (8.0.1.2 does
+not). `hy8_run.py` uses the same route as HY-8 Exporter: it copies the
+project to `_hy8_runs\<name>_<time>\` beside it, runs
+`HY864.exe -OpenRunSave` on the copy, and reads the `.rst` that writes. The
+original project is not changed. `--hy8-results` picks the behavior:
+
+| Mode | Behavior |
+|---|---|
+| `auto` (default) | Use the `.rst` beside the project when it is not older than the `.hy8`; otherwise run HY-8. If HY-8 is not found, an older `.rst` is still used, with a note on the report. |
+| `existing` | Only the `.rst` beside the project. |
+| `run` | Always run HY-8 on a copy. |
+
+`--hy8-exe` (or the `HY8_EXE` variable) points to `HY864.exe` when it is not
+under `C:\Program Files\HY-8*`. Where the results came from is printed on the
+HY-8 source data page.
 
 The `.rst` must be in English units. Box and circular shapes are supported;
 other HY-8 shapes raise an error.
@@ -178,11 +213,14 @@ selection, the low tailwater path, the LB gate, circular geometry (segment
 area, chord, critical depth, embedment, full barrel) and input validation.
 `test_hy8_io.py` runs the parsers and the block 1 mapping on the synthetic
 HY-8_Exporter demo project in `examples/`. `test_hec14_report.py` checks the
-page structure, logo embedding, the HY-8 source page, the batch CLI and a
-real print-to-PDF where a browser can print. `test_hec14_gui.py` checks the
-form round trip against the examples and, where a display exists, opens the
-window, runs an example and does an HY-8 import. CI runs all of it on Python
-3.11, 3.12 and 3.13.
+page structure, the figures page, logo embedding, the HY-8 source page, the
+batch CLI and a real print-to-PDF where a browser can print.
+`test_hy8_run.py` checks the results modes and the run on a copy with a
+stand-in for `HY864.exe` (HY-8 itself needs Windows, so the real
+`-OpenRunSave` call is checked by hand). `test_hec14_gui.py` checks the form
+round trip against the examples and, where a display exists, opens the
+window, runs an example, does an HY-8 import with and without a `.rst`, and
+exports a report. CI runs all of it on Python 3.11, 3.12 and 3.13.
 
 ## Differences from the workbook
 

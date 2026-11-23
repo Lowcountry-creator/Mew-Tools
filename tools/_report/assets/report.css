@@ -154,3 +154,28 @@ table.grid td.nw { white-space: nowrap; }
 table.grid td.ok { color: var(--ok); font-weight: 600; }
 table.grid td.warn { color: var(--review); font-weight: 600; }
 table.grid td.src { background: #E0F2FE !important; font-weight: 700; }
+
+/* HEC-14 outlet protection figures */
+.figure.lower svg { max-height: 2.35in; }
+.sw.cls-A { background: #E7E5E4; border: 1px solid #A8A29E; }
+.sw.cls-B { background: #C8C2BC; }
+.sw.cls-C { background: #A39A92; }
+.sw.cls-D { background: #78706A; }
+.sw.cls-x { background: #FCA5A5; }
+.sw.basin { height: 0; border-top: 2px dashed #B45309; border-radius: 0; }
+.sw.jet { height: 0; border-top: 3px solid #1D4ED8; border-radius: 0; }
+.sw.perm { height: 0; border-top: 2px dashed #047857; border-radius: 0; }
+.sw.chan { height: 0; border-top: 2px dashed #64748B; border-radius: 0; }
+.sw.len { height: 0; border-top: 2px solid #0C4A6E; border-radius: 0; }
+.sw.valid, .sw.nopool, .sw.warnpt { width: 10px; height: 10px; border-radius: 50%; }
+.sw.valid { background: #047857; }
+.sw.nopool { background: #64748B; }
+.sw.warnpt { background: #B45309; }
+.legend span { white-space: nowrap; }
+.fig-block .legend { display: block; margin: 2px 0 4px; }
+.fig-block .legend span { display: inline-block; margin-right: 14px; }
+.fig-block .legend .sw { vertical-align: middle; margin-right: 5px; }
+/* Fixed figure heights so the two figure rows always fit one page. */
+.fig-block .figure svg { width: 100%; max-height: none; }
+.fig-block .figure.sketch svg { height: 2.35in; }
+.fig-block .figure.lower svg { height: 1.8in; }

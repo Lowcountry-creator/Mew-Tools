@@ -1,9 +1,11 @@
 """Tests for the paged HTML/PDF report."""
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
+import hec14_figures as fig
 import hec14_outlet_protection as h
 import hec14_report
 import hy8_io
@@ -19,15 +21,15 @@ def _items(keys=("culv1", "culv2", "culv4")):
 
 def test_html_structure_and_logo():
     html = hec14_report.render_html(_items(), {"prepared_by": "JMW"})
-    # Cover plus four pages per culvert.
-    assert html.count("<section class='page") == 1 + 3 * 4
+    # Cover plus five pages per culvert (figures page first).
+    assert html.count("<section class='page") == 1 + 3 * 5
     assert "data:image/svg+xml;base64," in html
     assert "Culvert Outlet Protection Calculations" in html
     assert "Prepared by:</b> JMW" in html
     # Key numbers and strings from the workbook appear on the pages.
     assert "Class D 0 to 56 ft. Class C 56 to 108 ft." in html
     assert "Valid riprap basin for the trial stone" in html
-    assert "Page 13 of 13" in html
+    assert "Page 16 of 16" in html
     # Contents has one entry per culvert.
     assert html.count("<li><span>Culvert ") == 3
 
@@ -59,8 +61,8 @@ def test_source_page_from_hy8():
     labels = [r["label"] for r in inp.hy8_summary["rows"]]
     assert "Outlet Velocity" in labels and "Flow Type" in labels
     html = hec14_report.render_html([(inp, h.analyze(inp))])
-    # Five pages for this culvert: the source page is added.
-    assert html.count("<section class='page") == 1 + 5
+    # Six pages for this culvert: the source page is added.
+    assert html.count("<section class='page") == 1 + 6
     assert "HY-8 source data" in html
     assert "Culvert Summary Table - Twin 6x4 Box" in html
     assert "class='src'" in html  # design column highlighted
@@ -71,7 +73,7 @@ def test_write_report_html_only(tmp_path):
     out = hec14_report.write_report(_items(("culv2",)), tmp_path / "r.html")
     assert Path(out["html"]).exists()
     assert out["pdf"] is None
-    assert out["pages"] == 5
+    assert out["pages"] == 6
 
 
 def _browser():
@@ -112,7 +114,7 @@ def test_cli_batch_and_html(tmp_path, capsys):
                  "--prepared-by", "JMW", "--report-date", "2026-11-22"])
     assert rc == 0
     err = capsys.readouterr().err
-    assert "HTML report" in err and "13 pages" in err
+    assert "HTML report" in err and "16 pages" in err
     text = html.read_text(encoding="utf-8")
     assert "2026-11-22" in text
     assert text.count("<li><span>Culvert ") == 3
@@ -124,3 +126,44 @@ def test_cli_pdf_without_browser_reports_error(tmp_path, capsys):
     assert rc == 2
     assert "ERROR" in capsys.readouterr().err
     assert (tmp_path / "r.html").exists()  # HTML still written
+
+
+# ---- figures ---------------------------------------------------------------
+
+
+def test_figures_page_for_a_basin():
+    html = hec14_report.render_html(_items(("culv1",)))
+    assert "outlet protection figures" in html
+    body = html.split("</style>")[1]
+    page = body.split("outlet protection figures")[1].split("<section")[0]
+    assert page.count("<svg") == 3
+    assert "Protection length 108 ft" in page  # chart and profile
+    assert "Option 2 pool: hs 1.82 ft, Ls 42 ft, La 14 ft" in page
+    assert "Option 2 riprap basin, plan" in page
+    assert "Wb 51.3 ft" in page
+    assert "Riprap Class D" in page and "Riprap Class C" in page
+
+
+def test_figures_page_without_a_basin_plots_the_stone_check():
+    html = hec14_report.render_html(_items(("culv2",)))
+    body = html.split("</style>")[1]
+    page = body.split("outlet protection figures")[1].split("<section")[0]
+    assert "Option 2 riprap basin, plan" not in page
+    assert "Riprap basin check, HEC-14 Eq. 10.1" in page
+    assert "Trial D50, Class B" in page  # same stone, one point
+    assert "Target 4.00 fps at 57.3 ft" in page
+
+
+def test_figures_without_jet_velocities():
+    inp = h.Inputs.from_dict({**asdict(h.EXAMPLES["culv2"]),
+                              "V_LB": [0, 0, 0, 0]})
+    html = hec14_report.render_html([(inp, h.analyze(inp))])
+    assert "no velocity decay to plot" in html
+
+
+def test_lined_reaches_stop_at_the_adopted_length():
+    r = h.analyze(h.EXAMPLES["culv1"])
+    assert fig.lined_reaches(r) == [(0.0, 56.0, "D (1.80)"),
+                                    (56.0, 108.0, "C (1.30)")]
+    assert fig.class_letter("D (1.80)") == "D"
+    assert fig.class_fill("Larger than D") == fig.CLASS_OTHER

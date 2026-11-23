@@ -5,7 +5,9 @@ came from, onto US Letter landscape pages in the shared Mew-Tools frame
 (``tools/_report``), the same frame HY-8_Exporter uses: logo, title bar,
 footer with page numbers, cover with contents and a results grid.
 
-One culvert gives four pages (five with HY-8 source data). A batch gives
+One culvert gives five pages (six with HY-8 source data): a figures page
+in the HY-8_Exporter style (profile sketch, velocity decay chart, basin
+plan or stone check chart), then the calculation blocks. A batch gives
 one document with a section per culvert.
 """
 
@@ -22,6 +24,7 @@ if str(_TOOLS) not in sys.path:
 
 from _report import (ReportDocument, embedded_logo, esc, export_pdf,  # noqa: E402
                      grid_table, kv_table)
+import hec14_figures as fig  # noqa: E402
 from hec14_outlet_protection import (GIVES_BASIN, Inputs, Results,  # noqa: E402
                                      __version__)
 
@@ -122,6 +125,39 @@ def _page_inputs(inp: Inputs, r: Results) -> str:
     return _cols(left, right, "cols-2-wide")
 
 
+def _figure(title: str, svg: str, legend: str, css: str) -> str:
+    return (f"<div class='fig-block'>{_h3(title)}"
+            f"<div class='figure {css}'>{svg}</div>{legend}</div>")
+
+
+def _page_figures(inp: Inputs, r: Results) -> str:
+    """Overview page: profile, velocity decay, basin plan or stone check."""
+    length = (f"{r.L_adopted:g} ft" if isinstance(r.L_adopted, (int, float))
+              else str(r.L_adopted))
+    key = [
+        ("Froude number, Fr", r.Fr, 2, ""),
+        ("TW / ye, tailwater case", f"{r.TW_ye:.2f}, {r.tailwater_case}", 0,
+         ""),
+        ("Trial stone gives", r.trial_gives, 0, ""),
+        ("Outlet protection length", length, 0, ""),
+        ("Option 1, lined channel at bed grade", r.option_1, 0, ""),
+        ("Option 2, riprap basin", r.option_2, 0, ""),
+    ]
+    top = _cols(
+        _figure("Outlet protection profile (schematic)", fig.profile_svg(inp, r),
+                fig.profile_legend(r), "sketch"),
+        _figure("Jet velocity decay, HEC-14 Sec 10.1.3",
+                fig.velocity_decay_svg(inp, r), fig.velocity_legend(),
+                "sketch"))
+    title, svg, legend = fig.lower_figure(inp, r)
+    bottom = _cols(_figure(title, svg, legend, "lower"),
+                   _h3("Key results") + kv_table(key, "kv text tight"))
+    note = _note("Profile: horizontal to scale, vertical exaggerated, rock "
+                 "thickness not to scale. Datum is the outlet invert. Values "
+                 "are from the blocks on the following pages.")
+    return top + bottom + note
+
+
 def _page_source(inp: Inputs) -> Optional[str]:
     """HY-8 Culvert Summary Table the inputs were read from, if any."""
     src = inp.hy8_summary
@@ -148,6 +184,8 @@ def _page_source(inp: Inputs) -> Optional[str]:
 
     used = (f"Design storm column: {cols[i]}" if 0 <= i < len(cols)
             else "Design storm column not recorded")
+    if src.get("results_note"):
+        used += f". {src['results_note']}"
     mapping = [
         ("Q", "Culvert Discharge (this culvert, all barrels)", 0, ""),
         ("yo", "Outlet Depth", 0, ""),
@@ -360,6 +398,8 @@ def build_document(items: Sequence[Item], presentation: Optional[Dict] = None,
     for k, (inp, r) in enumerate(items, 1):
         name = _name(inp, k)
         doc.section(name)
+        doc.add_page(f"{name}: outlet protection figures",
+                     _page_figures(inp, r), inp.design_storm)
         doc.add_page(f"{name}: inputs and outlet hydraulics",
                      _page_inputs(inp, r), inp.design_storm)
         source = _page_source(inp)

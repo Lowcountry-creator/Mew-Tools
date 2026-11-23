@@ -952,9 +952,19 @@ def _inputs_from_hy8_args(a: argparse.Namespace) -> Inputs:
     flow = _as_key(a.flow, allow_float=True)
     if flow is None:
         flow = -1  # resolved below to the last column
+    rst, note = a.rst, ""
+    if rst is None:
+        import hy8_run  # runs HY-8 on a copy when no current .rst exists
+
+        try:
+            rst, note = hy8_run.locate_results(a.hy8, a.hy8_results,
+                                               a.hy8_exe)
+        except (RuntimeError, FileNotFoundError) as exc:
+            raise SystemExit(f"ERROR: {exc}") from None
+        print(f"{note}.", file=sys.stderr)
     inp = hy8_io.inputs_from_hy8(
         a.hy8, _as_key(a.crossing), _as_key(a.culvert), flow,
-        rst_path=a.rst, **overrides)
+        rst_path=rst, results_note=note, **overrides)
     if a.v_lb is None:
         print("WARNING: no --v-lb given; jet velocities at 1 to 4 LB are 0. "
               "Blocks 6 to 8 and 10 are placeholders until you enter the "
@@ -1007,7 +1017,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         "are not in those files: give --v-lb and --hs.")
     hy8.add_argument("--hy8", metavar="FILE", help="HY-8 project file")
     hy8.add_argument("--rst", metavar="FILE",
-                     help="results file (default: same name as .hy8)")
+                     help="results file (default: same name as .hy8, or "
+                          "generated per --hy8-results)")
+    hy8.add_argument("--hy8-results", choices=("auto", "existing", "run"),
+                     default="auto",
+                     help="auto: use the .rst beside the project when current, "
+                          "else run HY-8 -OpenRunSave on a copy; existing: "
+                          "only the .rst beside it; run: always run HY-8 "
+                          "(default auto)")
+    hy8.add_argument("--hy8-exe", metavar="EXE", default="",
+                     help="HY864.exe path if not in C:\\Program Files\\HY-8* "
+                          "(HY8_EXE does the same)")
     hy8.add_argument("--crossing", default=0,
                      help="crossing name or 0-based index (default 0)")
     hy8.add_argument("--culvert", default=0,
