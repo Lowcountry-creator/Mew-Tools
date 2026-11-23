@@ -20,9 +20,10 @@ RST = HY8.with_suffix(".rst")
 POSIX = pytest.mark.skipif(os.name == "nt", reason="stand-in is a sh script")
 
 
-def fake_hy8(folder: Path, write=True) -> Path:
+def fake_hy8(folder: Path, write=True, code=3) -> Path:
     exe = folder / "HY864.sh"
-    body = f"cp '{RST}' \"${{2%.hy8}}.rst\"\n" if write else "exit 3\n"
+    body = (f"cp '{RST}' \"${{2%.hy8}}.rst\"\n" if write
+            else f"echo 'called with OpenRunSave'\nexit {code}\n")
     exe.write_text("#!/bin/sh\n" + body)
     exe.chmod(0o755)
     return exe
@@ -111,6 +112,33 @@ def test_run_mode_runs_even_with_a_current_rst(tmp_path):
 def test_hy8_that_writes_nothing_is_reported(tmp_path):
     exe = fake_hy8(tmp_path, write=False)
     with pytest.raises(RuntimeError, match="exit code 3"):
+        hy8_run.locate_results(project(tmp_path), "auto", str(exe))
+
+
+@POSIX
+def test_hy8_runs_from_the_work_folder_and_logs(tmp_path):
+    exe = tmp_path / "HY864.sh"
+    exe.write_text("#!/bin/sh\npwd\n"
+                   f"cp '{RST}' \"${{2%.hy8}}.rst\"\n")
+    exe.chmod(0o755)
+    rst, _ = hy8_run.locate_results(project(tmp_path), "run", str(exe))
+    log = rst.parent / hy8_run.RUN_LOG
+    assert log.read_text().strip() == str(rst.parent)
+
+
+def test_crash_code_is_explained(tmp_path):
+    cmd = ["C:/HY-8/HY864.exe", "-OpenRunSave", "C:/runs/Demo.hy8"]
+    msg = hy8_run._no_results_message(Path("Demo.hy8"), 3221225477, cmd,
+                                      tmp_path / "none.txt")
+    assert "HY-8 crashed" in msg and "access violation" in msg
+    assert "0xC0000005" in msg
+    assert '"C:/HY-8/HY864.exe" -OpenRunSave "C:/runs/Demo.hy8"' in msg
+
+
+@POSIX
+def test_hy8_output_is_shown_when_it_writes_nothing(tmp_path):
+    exe = fake_hy8(tmp_path, write=False)
+    with pytest.raises(RuntimeError, match="HY-8 said: called with"):
         hy8_run.locate_results(project(tmp_path), "auto", str(exe))
 
 

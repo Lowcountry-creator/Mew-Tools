@@ -5,7 +5,8 @@ next to the project (8.0.1.2 does not). HY-8 does accept the command line
 switch ``-OpenRunSave``, which opens a project, runs every crossing, saves
 it, and writes ``.rst`` and ``.rsql`` next to it. This module runs that
 switch on a COPY in a work folder, so the user's project is never touched,
-and returns the ``.rst`` it wrote.
+and returns the ``.rst`` it wrote. HY-8's console output goes to
+``hy8_run_log.txt`` in the same folder.
 
 Same approach and executable search as HY-8_Exporter (hy8_runner.py and
 hy8_package.py; MIT, same author). HY-8 runs on Windows only.
@@ -38,6 +39,13 @@ RUN_TIMEOUT_SECONDS = 300
 RESULT_MODES = ("auto", "existing", "run")
 RUNS_FOLDER = "_hy8_runs"  # created beside the project
 STALE_TOLERANCE_S = 2.0  # file time resolution on some shares
+RUN_LOG = "hy8_run_log.txt"  # HY-8 console output, kept in the run folder
+# Windows exit codes that mean the program crashed rather than finished.
+CRASH_CODES = {
+    0xC0000005: "access violation",
+    0xC0000409: "stack buffer overrun",
+    0xC0000374: "heap corruption",
+}
 
 PathLike = Union[str, Path]
 
@@ -84,25 +92,50 @@ def run_hy8_copy(hy8_path: PathLike, work_dir: PathLike,
         old = copy.with_suffix(suffix)
         if old.exists():
             old.unlink()
-    kwargs = {}
-    if os.name == "nt":  # keep HY-8's window hidden
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = subprocess.SW_HIDE
-        kwargs["startupinfo"] = startup
+    log = work / RUN_LOG
+    command = [str(exe), "-OpenRunSave", str(copy)]
     try:
-        done = subprocess.run(
-            [str(exe), "-OpenRunSave", str(copy)], capture_output=True,
-            text=True, timeout=RUN_TIMEOUT_SECONDS, check=False, **kwargs)
+        # Same call as Aquaveo's hy8runner: a normal window, no hidden-start
+        # flags. Run from the work folder, which is writable and holds the
+        # copy, not from wherever the calling app was started.
+        with open(log, "w", encoding="utf-8", errors="replace") as out:
+            done = subprocess.run(
+                command, cwd=str(work), stdin=subprocess.DEVNULL, stdout=out,
+                stderr=subprocess.STDOUT, timeout=RUN_TIMEOUT_SECONDS,
+                check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(f"HY-8 could not be run: {exc}") from exc
     rst = copy.with_suffix(".rst")
     if not rst.is_file() or rst.stat().st_size == 0:
-        detail = (done.stderr or done.stdout or "").strip()
-        raise RuntimeError(
-            f"HY-8 finished (exit code {done.returncode}) but wrote no "
-            f"results for {source.name}. {detail}".strip())
+        raise RuntimeError(_no_results_message(source, done.returncode,
+                                               command, log))
     return rst
+
+
+def _quote(path: PathLike) -> str:
+    return f'"{path}"'
+
+
+def _no_results_message(source: Path, code: int, command, log: Path) -> str:
+    """Plain explanation when HY-8 wrote no .rst, with a command to retry."""
+    code_u = code & 0xFFFFFFFF  # Windows reports crashes as large unsigned
+    if code_u in CRASH_CODES:
+        what = (f"HY-8 crashed while running {source.name} "
+                f"({CRASH_CODES[code_u]}, exit code 0x{code_u:08X}) and "
+                "wrote no results.")
+    else:
+        what = (f"HY-8 finished (exit code {code}) but wrote no results "
+                f"for {source.name}.")
+    detail = ""
+    if log.is_file():
+        detail = log.read_text(encoding="utf-8", errors="replace").strip()
+    manual = " ".join([_quote(command[0]), command[1], _quote(command[2])])
+    parts = [what]
+    if detail:
+        parts.append(f"HY-8 said: {detail[:400]}")
+    parts.append("To see whether HY-8 can run this file outside this tool, "
+                 f"paste into Command Prompt: {manual}")
+    return "\n\n".join(parts)
 
 
 def locate_results(hy8_path: PathLike, mode: str = "auto", exe: str = "",
