@@ -95,7 +95,7 @@ def test_runs_hy8_on_a_copy(tmp_path):
     before = p.read_bytes()
     rst, note = hy8_run.locate_results(p, "auto", str(fake_hy8(tmp_path)))
     assert rst.parent.parent == p.parent / hy8_run.RUNS_FOLDER
-    assert rst.name == "Demo.rst" and rst.stat().st_size > 0
+    assert rst.suffix == ".rst" and rst.stat().st_size > 0
     assert "-OpenRunSave" in note
     assert p.read_bytes() == before
     assert not p.with_suffix(".rst").exists()
@@ -122,8 +122,27 @@ def test_hy8_runs_from_the_work_folder_and_logs(tmp_path):
                    f"cp '{RST}' \"${{2%.hy8}}.rst\"\n")
     exe.chmod(0o755)
     rst, _ = hy8_run.locate_results(project(tmp_path), "run", str(exe))
-    log = rst.parent / hy8_run.RUN_LOG
-    assert log.read_text().strip() == str(rst.parent)
+    log = (rst.parent / hy8_run.RUN_LOG).read_text()
+    assert log.startswith("Source project: ")
+    assert log.split("\n\n", 1)[1].strip() == str(rst.parent)
+
+
+@POSIX
+def test_long_run_paths_use_a_short_copy_name(tmp_path, monkeypatch):
+    exe = fake_hy8(tmp_path)
+    monkeypatch.setattr(hy8_run, "MAX_RUN_PATH", 10_000)
+    rst, _ = hy8_run.locate_results(project(tmp_path / "a"), "run", str(exe))
+    assert rst.name == "Demo.rst"
+    monkeypatch.setattr(hy8_run, "MAX_RUN_PATH", 20)
+    rst, _ = hy8_run.locate_results(project(tmp_path / "b"), "run", str(exe))
+    assert rst.name == "run.rst" and rst.stat().st_size > 0
+
+
+def test_runs_root_does_not_nest(tmp_path):
+    runs = tmp_path / hy8_run.RUNS_FOLDER
+    inner = runs / "20261123_173409" / "Demo.hy8"
+    assert hy8_run.runs_root(inner) == runs
+    assert hy8_run.runs_root(tmp_path / "Demo.hy8") == runs
 
 
 def test_crash_code_is_explained(tmp_path):

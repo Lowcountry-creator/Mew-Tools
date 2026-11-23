@@ -129,9 +129,13 @@ inputs so you can edit and rerun without HY-8.
 
 HY-8 8.x does not always write the `.rst` on a normal save (8.0.1.2 does
 not). `hy8_run.py` uses the same route as HY-8 Exporter: it copies the
-project to `_hy8_runs\<name>_<time>\` beside it, runs
-`HY864.exe -OpenRunSave` on the copy, and reads the `.rst` that writes. The
-original project is not changed. `--hy8-results` picks the behavior:
+project to `_hy8_runs\<date>_<time>\` beside it, runs
+`HY864.exe -OpenRunSave` on the copy from that folder, and reads the `.rst`
+that writes. The original project is not changed. HY-8's output goes to
+`hy8_run_log.txt` in the run folder. When the copy's full path would pass
+80 characters it is named `run.hy8`, because HY-8 8.0.1.2 crashed on long
+run paths. Picking a project inside an earlier run folder reuses that
+`_hy8_runs` folder rather than nesting a new one. `--hy8-results` picks the behavior:
 
 | Mode | Behavior |
 |---|---|
