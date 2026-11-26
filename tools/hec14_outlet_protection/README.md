@@ -11,7 +11,7 @@ code needs newer than 3.9, but older versions are not tested).
 ## Run
 
 ```bash
-# Built-in worked example (US176 Culvert 1)
+# Built-in worked example (***** Culvert 1)
 python hec14_outlet_protection.py --example culv1
 
 # From HY-8 files (reads .hy8 and the matching .rst written by HY-8)
@@ -24,9 +24,9 @@ python hec14_outlet_protection.py --template > culv.json   # edit the inputs
 python hec14_outlet_protection.py culv.json --out culv_report.txt --json-out culv.json.out
 
 # Printed calc package: HTML and PDF in the HY-8 Exporter page frame
-python hec14_outlet_protection.py --batch examples/us176_batch.json \
-    --prepared-by "JMW" --report-date 11/22/2026 --project-number "US176" \
-    --logo path/to/logo.png --html US176_outlet_protection.html --pdf US176_outlet_protection.pdf
+python hec14_outlet_protection.py --batch examples/example_batch.json \
+    --prepared-by "JMW" --report-date 11/22/2026 --project-number "*****" \
+    --logo path/to/logo.png --html outlet_protection.html --pdf outlet_protection.pdf
 
 # Tests (from the repo root or this folder)
 python -m pytest
@@ -214,7 +214,7 @@ and should match the HY-8 Basin Length.
 ## Verification
 
 `test_hec14_outlet_protection.py` checks every computed cell of the three
-US176 culvert tabs (Culverts 1, 2 and 4) to 1e-9, plus branch coverage for
+***** culvert tabs (Culverts 1, 2 and 4) to 1e-9, plus branch coverage for
 the C0 curves, the Excel CEILING rounding, interpolation past 4 LB, class
 selection, the low tailwater path, the LB gate, circular geometry (segment
 area, chord, critical depth, embedment, full barrel) and input validation.
@@ -234,7 +234,7 @@ exports a report. CI runs all of it on Python 3.11, 3.12 and 3.13.
 - **LB gate.** The workbook used Ls + La whenever the trial stone's envelope
   hs was positive, even if D50/ye was outside 0.1 to 0.7 or hs/D50 < 2. This
   port uses Ls + La only for a valid basin and 4 Wo otherwise. No effect on
-  the three US176 culverts.
+  the three ***** culverts.
 - **Circular outlets** are supported (above). The workbook was box only.
 
 ## Known limits

@@ -7,7 +7,7 @@ same text report the command line writes.
 
 What it does
     - Block 1 inputs as a form, grouped the way the workbook groups them.
-    - Load a built-in US176 example, or open and save an inputs JSON.
+    - Load a built-in ***** example, or open and save an inputs JSON.
     - Import block 1 from an HY-8 project (.hy8), picking the crossing,
       culvert and flow from lists. Results come from the .rst beside the
       project, or from HY-8 itself run on a copy (``hy8_run``) when there
