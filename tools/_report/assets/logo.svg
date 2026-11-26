@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+<rect width="160" height="160" rx="32" fill="#0c4a6e"/>
+<path d="M24 50h44l16 25h52M24 80h34l22 26h56" stroke="#38bdf8" stroke-width="8" fill="none" stroke-linecap="round"/>
+<circle cx="26" cy="50" r="9" fill="#fff"/><circle cx="84" cy="75" r="9" fill="#fff"/><circle cx="136" cy="106" r="9" fill="#fff"/>
+<text x="80" y="145" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="25" fill="#fff">JMW</text>
+</svg>
