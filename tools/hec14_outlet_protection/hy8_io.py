@@ -7,7 +7,7 @@ Two HY-8 files carry what block 1 needs:
     tailwater channel slope. Lengths are stored in ft and flows in cfs
     whatever the display units.
 
-``.rst`` (results, written by HY-8 when a crossing is analyzed)
+``.rst`` (results; HY-8 8.x writes it with -OpenRunSave, see hy8_run.py)
     Per culvert "Culvert Summary Table": Culvert Discharge, Outlet Depth,
     Outlet Velocity, Tailwater Depth, Tailwater Velocity, one column per
     flow. These are the design storm row values the workbook asks for.
@@ -251,6 +251,7 @@ class RstTable:
     culvert_index: Optional[int]
     rows: Dict[str, List[Optional[float]]] = field(default_factory=dict)
     units: Dict[str, str] = field(default_factory=dict)
+    text: Dict[str, List[str]] = field(default_factory=dict)  # raw cells
 
     def row(self, prefix: str) -> List[Optional[float]]:
         """Values of the first row whose name starts with ``prefix``."""
@@ -338,6 +339,7 @@ def read_rst(path: Union[str, Path]) -> List[RstCrossing]:
             match = _UNIT.search(label)
             name = _UNIT.sub("", label).strip()
             table.rows[name] = [_cell(c) for c in cells]
+            table.text[name] = [c.strip() for c in cells]
             table.units[name] = match.group(1).strip() if match else ""
     return crossings
 
@@ -389,6 +391,7 @@ def inputs_from_hy8(hy8_path: Union[str, Path],
                     culvert: Union[str, int],
                     flow: Union[str, int, float],
                     rst_path: Optional[Union[str, Path]] = None,
+                    results_note: str = "",
                     **overrides) -> Inputs:
     """Build block 1 ``Inputs`` from an HY-8 project and its results.
 
@@ -399,6 +402,8 @@ def inputs_from_hy8(hy8_path: Union[str, Path],
         flow       flow name ('50-yr'), 0-based column index, or total
                    crossing discharge in cfs (float).
         rst_path   .rst results file; defaults to hy8_path with .rst.
+                   ``hy8_run.locate_results`` finds or generates one.
+        results_note  where the .rst came from; printed on the report.
         overrides  any Inputs field, typed values: V_LB, HS_hy8, D50_trial,
                    min_class, V_perm, tau_perm, slope, design_storm, ...
 
@@ -409,8 +414,9 @@ def inputs_from_hy8(hy8_path: Union[str, Path],
     rst_path = Path(rst_path) if rst_path else hy8_path.with_suffix(".rst")
     if not rst_path.exists():
         raise FileNotFoundError(
-            f"{rst_path.name} not found. Analyze the crossing in HY-8 so it "
-            "writes the results file, or pass rst_path.")
+            f"{rst_path.name} not found. HY-8 8.x may not write it on a "
+            "normal save; hy8_run.locate_results runs HY-8 on a copy to make "
+            "one, or pass rst_path.")
 
     project = read_hy8(hy8_path)
     xing = project.crossing(crossing)
@@ -459,6 +465,25 @@ def inputs_from_hy8(hy8_path: Union[str, Path],
         rise=culv.rise_ft,
         embedment=culv.embed_depth_ft,
         slope=xing.channel_slope,
+        hy8_summary=_summary_record(table, names, i, results_note),
     )
     data.update(overrides)
     return Inputs.from_dict(data)
+
+
+def _summary_record(table: RstTable, names: List[str], i: int,
+                    note: str = "") -> Dict:
+    """Serializable copy of the Culvert Summary Table for the report."""
+    totals = table.row("Total Discharge")
+    columns = []
+    for j, q in enumerate(totals):
+        name = names[j] if j < len(names) and names[j] else ""
+        columns.append(name or (f"{q:g} cfs" if q is not None else f"Col {j + 1}"))
+    rows = [{"label": name, "unit": table.units.get(name, ""),
+             "values": values, "text": table.text.get(name, [])}
+            for name, values in table.rows.items()]
+    out = {"table": table.title, "flow_index": i, "columns": columns,
+           "rows": rows}
+    if note:
+        out["results_note"] = note
+    return out

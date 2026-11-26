@@ -37,7 +37,10 @@ import json
 import math
 import sys
 from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
 from typing import Dict, List, Optional, Union
+
+__version__ = "1.1.0"
 
 Number = Union[int, float]
 
@@ -129,6 +132,11 @@ class Inputs:
 
     # HY-8 Pool Depth (HS) at the trial D50, Envelope Curve. Optional.
     HS_hy8: Optional[float] = None
+
+    # HY-8 Culvert Summary Table the inputs were read from (hy8_io fills
+    # this). Printed as a source data page. Keys: table, flow_index,
+    # columns, rows [{label, unit, values, text}].
+    hy8_summary: Optional[Dict] = None
 
     def validate(self) -> None:
         """Raise ValueError on inputs the formulas cannot take."""
@@ -944,9 +952,19 @@ def _inputs_from_hy8_args(a: argparse.Namespace) -> Inputs:
     flow = _as_key(a.flow, allow_float=True)
     if flow is None:
         flow = -1  # resolved below to the last column
+    rst, note = a.rst, ""
+    if rst is None:
+        import hy8_run  # runs HY-8 on a copy when no current .rst exists
+
+        try:
+            rst, note = hy8_run.locate_results(a.hy8, a.hy8_results,
+                                               a.hy8_exe)
+        except (RuntimeError, FileNotFoundError) as exc:
+            raise SystemExit(f"ERROR: {exc}") from None
+        print(f"{note}.", file=sys.stderr)
     inp = hy8_io.inputs_from_hy8(
         a.hy8, _as_key(a.crossing), _as_key(a.culvert), flow,
-        rst_path=a.rst, **overrides)
+        rst_path=rst, results_note=note, **overrides)
     if a.v_lb is None:
         print("WARNING: no --v-lb given; jet velocities at 1 to 4 LB are 0. "
               "Blocks 6 to 8 and 10 are placeholders until you enter the "
@@ -958,8 +976,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(
         description="HEC-14 Ch. 10 culvert outlet protection (HY-8 workflow).")
     p.add_argument("inputs", nargs="?", help="JSON file with block 1 inputs")
-    p.add_argument("--example", choices=sorted(EXAMPLES),
-                   help="run a built-in worked example")
+    p.add_argument("--example", choices=sorted(EXAMPLES) + ["all"],
+                   help="run a built-in worked example, or all of them")
     p.add_argument("--template", action="store_true",
                    help="print a blank inputs JSON and exit")
     p.add_argument("--json-out", metavar="FILE",
@@ -968,6 +986,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--inputs-out", metavar="FILE",
                    help="write the assembled block 1 inputs as JSON "
                         "(useful after --hy8, to edit and rerun)")
+    p.add_argument("--batch", metavar="FILE",
+                   help="JSON list of block 1 input objects; one document, "
+                        "one section per culvert")
+
+    rep = p.add_argument_group(
+        "Printed report",
+        "Paged HTML in the HY-8 Exporter frame (logo, title bar, page "
+        "numbers, cover with contents). PDF uses a local Edge or Chrome.")
+    rep.add_argument("--html", metavar="FILE", help="write the HTML report")
+    rep.add_argument("--pdf", metavar="FILE",
+                     help="print the HTML report to PDF (implies --html next "
+                          "to it if --html is not given)")
+    rep.add_argument("--logo", metavar="FILE",
+                     help="PNG, JPG, GIF or SVG logo for every page "
+                          "(default: Mew-Tools logo)")
+    rep.add_argument("--browser", metavar="EXE",
+                     help="Edge/Chrome executable for PDF export")
+    rep.add_argument("--title", help="report title")
+    rep.add_argument("--project-number", help="shown in header and cover")
+    rep.add_argument("--prepared-by", help="shown in header and cover")
+    rep.add_argument("--checked-by", help="shown on the cover")
+    rep.add_argument("--report-date", help="shown in header and cover")
+    rep.add_argument("--notes", help="free text on the cover")
 
     hy8 = p.add_argument_group(
         "HY-8 import",
@@ -976,7 +1017,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         "are not in those files: give --v-lb and --hs.")
     hy8.add_argument("--hy8", metavar="FILE", help="HY-8 project file")
     hy8.add_argument("--rst", metavar="FILE",
-                     help="results file (default: same name as .hy8)")
+                     help="results file (default: same name as .hy8, or "
+                          "generated per --hy8-results)")
+    hy8.add_argument("--hy8-results", choices=("auto", "existing", "run"),
+                     default="auto",
+                     help="auto: use the .rst beside the project when current, "
+                          "else run HY-8 -OpenRunSave on a copy; existing: "
+                          "only the .rst beside it; run: always run HY-8 "
+                          "(default auto)")
+    hy8.add_argument("--hy8-exe", metavar="EXE", default="",
+                     help="HY864.exe path if not in C:\\Program Files\\HY-8* "
+                          "(HY8_EXE does the same)")
     hy8.add_argument("--crossing", default=0,
                      help="crossing name or 0-based index (default 0)")
     hy8.add_argument("--culvert", default=0,
@@ -1002,31 +1053,64 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.template:
         print(json.dumps(asdict(Inputs()), indent=2))
         return 0
-    if a.example:
-        inp = EXAMPLES[a.example]
+
+    inputs: List[Inputs]
+    if a.example == "all":
+        inputs = [EXAMPLES[k] for k in sorted(EXAMPLES)]
+    elif a.example:
+        inputs = [EXAMPLES[a.example]]
     elif a.hy8:
-        inp = _inputs_from_hy8_args(a)
+        inputs = [_inputs_from_hy8_args(a)]
+    elif a.batch:
+        with open(a.batch, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, list):
+            p.error("--batch file must hold a JSON list of input objects")
+        inputs = [Inputs.from_dict(d) for d in data]
     elif a.inputs:
         with open(a.inputs, encoding="utf-8") as fh:
-            inp = Inputs.from_dict(json.load(fh))
+            inputs = [Inputs.from_dict(json.load(fh))]
     else:
-        p.error("give an inputs JSON file, --hy8, --example or --template")
+        p.error("give an inputs JSON file, --batch, --hy8, --example or "
+                "--template")
 
     if a.inputs_out:
+        payload = [asdict(i) for i in inputs]
         with open(a.inputs_out, "w", encoding="utf-8") as fh:
-            json.dump(asdict(inp), fh, indent=2)
+            json.dump(payload if len(payload) > 1 else payload[0], fh, indent=2)
 
-    r = analyze(inp)
-    report = format_report(inp, r)
+    items = [(inp, analyze(inp)) for inp in inputs]
+    report = "\n\n".join(format_report(inp, r) for inp, r in items)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(report + "\n")
-    else:
+    elif not (a.html or a.pdf):
         print(report)
     if a.json_out:
+        payload = [{"inputs": asdict(inp), "results": _results_to_dict(r)}
+                   for inp, r in items]
         with open(a.json_out, "w", encoding="utf-8") as fh:
-            json.dump({"inputs": asdict(inp), "results": _results_to_dict(r)},
-                      fh, indent=2)
+            json.dump(payload if len(payload) > 1 else payload[0], fh, indent=2)
+
+    if a.html or a.pdf:
+        import hec14_report  # local module; pulls in tools/_report
+
+        html_path = a.html or str(Path(a.pdf).with_suffix(".html"))
+        presentation = {
+            "title": a.title, "project_number": a.project_number,
+            "prepared_by": a.prepared_by, "checked_by": a.checked_by,
+            "report_date": a.report_date, "notes": a.notes,
+        }
+        try:
+            out = hec14_report.write_report(
+                items, html_path, a.pdf, presentation, a.logo, a.browser)
+        except RuntimeError as exc:  # PDF browser problems; HTML is written
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
+        print(f"HTML report: {out['html']} ({out['pages']} pages)",
+              file=sys.stderr)
+        if out["pdf"]:
+            print(f"PDF report: {out['pdf']}", file=sys.stderr)
     return 0
 
 
